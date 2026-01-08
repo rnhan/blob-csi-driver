@@ -28,6 +28,7 @@ import (
 
 	volumehelper "sigs.k8s.io/blob-csi-driver/pkg/util"
 	azcache "sigs.k8s.io/cloud-provider-azure/pkg/cache"
+	"sigs.k8s.io/cloud-provider-azure/pkg/metrics"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 
@@ -169,6 +170,13 @@ func (d *Driver) mountBlobfuseWithProxy(args, protocol string, authEnv []string)
 	connectionTimeout := time.Duration(d.blobfuseProxyConnTimeout) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
 	defer cancel()
+
+	mc := metrics.NewMetricContext(blobCSIDriverName, "node_blobfuse_proxy_mount", d.cloud.ResourceGroup, "", d.Name)
+	isOperationSucceeded := false
+	defer func() {
+		mc.ObserveOperationWithResult(isOperationSucceeded, Protocol, protocol)
+	}()
+
 	klog.V(2).Infof("start connecting to blobfuse proxy, protocol: %s, args: %s", protocol, args)
 	conn, err := grpc.DialContext(ctx, d.blobfuseProxyEndpoint, grpc.WithInsecure(), grpc.WithBlock())
 	if err != nil {
@@ -197,10 +205,18 @@ func (d *Driver) mountBlobfuseWithProxy(args, protocol string, authEnv []string)
 		output = resp.GetOutput()
 	}
 	klog.V(2).Infof("mount with blobfuse proxy completed, protocol: %s, args: %s, output: %s, error: %v", protocol, args, output, err)
+
+	isOperationSucceeded = err == nil
 	return output, err
 }
 
 func (d *Driver) mountBlobfuseInsideDriver(args string, protocol string, authEnv []string) (string, error) {
+	mc := metrics.NewMetricContext(blobCSIDriverName, "node_blobfuse_mount", d.cloud.ResourceGroup, "", d.Name)
+	isOperationSucceeded := false
+	defer func() {
+		mc.ObserveOperationWithResult(isOperationSucceeded, Protocol, protocol)
+	}()
+
 	var cmd *exec.Cmd
 
 	args = volumehelper.TrimDuplicatedSpace(args)
@@ -220,6 +236,7 @@ func (d *Driver) mountBlobfuseInsideDriver(args string, protocol string, authEnv
 	output, err := cmd.CombinedOutput()
 	klog.V(2).Infof("mount output: %s\n", string(output))
 
+	isOperationSucceeded = err == nil
 	return string(output), err
 }
 
